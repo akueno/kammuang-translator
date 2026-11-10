@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1f2a37">
+<title>カムムアン通訳</title>
+<style>
+  :root {
+    --bg: #f4f1ea; --panel: #ffffff; --ink: #1d232b; --muted: #6b7380;
+    --th: #8a4b17; --th-soft: #f6e7d6; --ja: #1f4f7a; --ja-soft: #dde9f4;
+    --rec: #c62f2f; --line: #ddd6c8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15181c; --panel: #1f242a; --ink: #eef0f2; --muted: #9aa3ad;
+      --th: #e2a46b; --th-soft: #3a2b1d; --ja: #8cbbe6; --ja-soft: #1c2c3b; --rec: #ff6b6b; --line: #333a42; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", "Noto Sans Thai", sans-serif; }
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  .half { flex: 1; display: flex; flex-direction: column; padding: 12px 16px; min-height: 0; gap: 10px; }
+  .half.th { transform: rotate(180deg); background: var(--th-soft); }
+  .half.ja { background: var(--ja-soft); }
+  .log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  .bubble { background: var(--panel); border-radius: 14px; padding: 10px 12px; border: 1px solid var(--line); }
+  .bubble.mine { opacity: .75; font-size: 14px; }
+  .bubble.theirs { font-size: 20px; line-height: 1.45; }
+  .bubble .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .bubble button.replay { float: right; border: none; background: none; font-size: 18px; color: var(--muted); padding: 0 0 0 8px; }
+  .controls { display: flex; align-items: center; gap: 12px; }
+  .mic { flex: 1; height: 64px; border-radius: 32px; border: none; font-size: 18px; font-weight: 600; color: #fff; }
+  .th .mic { background: var(--th); } .ja .mic { background: var(--ja); }
+  .mic.recording { background: var(--rec) !important; animation: pulse 1.2s infinite; }
+  .mic:disabled { opacity: .5; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(198,47,47,.18); } }
+  .status { font-size: 13px; color: var(--muted); min-height: 1.2em; text-align: center; }
+  .gear { width: 48px; height: 48px; border-radius: 24px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 22px; }
+  .divider { height: 2px; background: var(--line); }
+  dialog { border: none; border-radius: 16px; padding: 20px 16px; width: min(560px, calc(100vw - 32px)); background: var(--panel); color: var(--ink); max-height: 90dvh; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  dialog input, dialog select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 16px; }
+  dialog .row { display: flex; gap: 8px; margin-top: 18px; }
+  dialog .row button { flex: 1; padding: 12px; border-radius: 10px; border: none; font-size: 16px; background: var(--ja); color: #fff; }
+  dialog .row button.secondary { background: var(--line); color: var(--ink); }
+  dialog p.note { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- 上半分：タイ側（相手向けに180°回転） -->
+<section class="half th">
+  <div class="log" id="log-th"></div>
+  <div class="status" id="status-th"></div>
+  <div class="controls">
+    <button class="mic" id="mic-th" lang="th">🎤 แตะเพื่ออู้</button>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- 下半分：日本語側 -->
+<section class="half ja">
+  <div class="log" id="log-ja"></div>
+  <div class="status" id="status-ja"></div>
+  <div class="controls">
+    <button class="mic" id="mic-ja">🎤 タップして話す</button>
+    <button class="gear" id="open-settings" aria-label="設定">⚙︎</button>
+  </div>
+</section>
+
+<dialog id="settings">
+  <h3 style="margin:0">設定</h3>
+  <p class="note">キーはこの端末のブラウザ内にだけ保存されます。</p>
+  <label>Google Cloud APIキー（Speech-to-Text と Text-to-Speech を有効化）</label>
+  <input id="s-google" type="password" autocomplete="off">
+  <label>Anthropic APIキー</label>
+  <input id="s-anthropic" type="password" autocomplete="off">
+  <label>タイ側に返す言葉</label>
+  <select id="s-style">
+    <option value="central">標準タイ語（確実に通じる）</option>
+    <option value="northern">北タイ語（カムムアン）風</option>
+  </select>
+  <label>日本語話者の語尾（タイ語の丁寧語）</label>
+  <select id="s-polite">
+    <option value="krap">ครับ（男性）</option>
+    <option value="ka">ค่ะ（女性）</option>
+  </select>
+  <label>タイ語の音声（空欄で自動。例: th-TH-Neural2-C）</label>
+  <input id="s-voice-th" placeholder="th-TH-Neural2-C">
+  <label>日本語の音声（空欄で自動。例: ja-JP-Neural2-B）</label>
+  <input id="s-voice-ja" placeholder="ja-JP-Neural2-B">
+  <div class="row">
+    <button class="secondary" id="clear-log">会話を消去</button>
+    <button id="save-settings">保存</button>
+  </div>
+</dialog>
+
+<script type="module">
+import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm";
+
+// ---------- 設定 ----------
+const store = {
+  get(k, d = "") { try { return localStorage.getItem("kmt." + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("kmt." + k, v); } catch {} },
+};
+const $ = (id) => document.getElementById(id);
+const settingsFields = { google: "s-google", anthropic: "s-anthropic", style: "s-style", polite: "s-polite", voiceTh: "s-voice-th", voiceJa: "s-voice-ja" };
+const defaults = { style: "central", polite: "krap" };
+const cfg = () => Object.fromEntries(Object.keys(settingsFields).map(k => [k, store.get(k, defaults[k] ?? "")]));
+
+$("open-settings").onclick = () => {
+  const c = cfg();
+  for (const [k, id] of Object.entries(settingsFields)) $(id).value = c[k];
+  $("settings").showModal();
+};
+$("save-settings").onclick = () => {
+  for (const [k, id] of Object.entries(settingsFields)) store.set(k, $(id).value.trim());
+  $("settings").close();
+};
+$("clear-log").onclick = () => { history.length = 0; $("log-th").innerHTML = ""; $("log-ja").innerHTML = ""; $("settings").close(); };
+if (!cfg().google || !cfg().anthropic) setTimeout(() => $("open-settings").click(), 300);
+
+// ---------- 録音（生PCMで取り、16kHzに落とす。長さ無制限） ----------
+const TARGET_RATE = 16000;
+let rec = null; // { side, ctx, stream, node, chunks, rate, started, timer }
+
+async function startRecording(side) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  const src = ctx.createMediaStreamSource(stream);
+  const node = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  node.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  src.connect(node); node.connect(ctx.destination);
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const s = Math.floor((Date.now() - started) / 1000);
+    setStatus(side, side === "th" ? `กำลังฟัง… ${s} วิ (แตะอีกครั้งเมื่ออู้แล้ว)` : `録音中… ${s}秒（話し終わったらもう一度タップ）`);
+  }, 250);
+  rec = { side, ctx, stream, node, chunks, rate: ctx.sampleRate, timer };
+}
+
+async function stopRecording() {
+  const r = rec; rec = null;
+  clearInterval(r.timer);
+  r.node.disconnect(); r.stream.getTracks().forEach(t => t.stop()); await r.ctx.close();
+  const total = r.chunks.reduce((n, c) => n + c.length, 0);
+  const all = new Float32Array(total); let off = 0;
+  for (const c of r.chunks) { all.set(c, off); off += c.length; }
+  return downsample(all, r.rate, TARGET_RATE);
+}
+
+function downsample(buf, from, to) {
+  if (from === to) return buf;
+  const ratio = from / to, len = Math.floor(buf.length / ratio), out = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), buf.length);
+    let sum = 0; for (let j = start; j < end; j++) sum += buf[j];
+    out[i] = sum / Math.max(1, end - start);
+  }
+  return out;
+}
+
+function toBase64PCM16(f32) {
+  const bytes = new Uint8Array(f32.length * 2), view = new DataView(bytes.buffer);
+  for (let i = 0; i < f32.length; i++) { const s = Math.max(-1, Math.min(1, f32[i])); view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
+  let bin = ""; const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  return btoa(bin);
+}
+
+// ---------- Google 音声認識（同期APIは1回60秒まで → 50秒ごとに分割して並列送信） ----------
+const SEGMENT_SEC = 50;
+async function transcribe(pcm, languageCode) {
+  const segLen = SEGMENT_SEC * TARGET_RATE, segments = [];
+  for (let i = 0; i < pcm.length; i += segLen) segments.push(pcm.subarray(i, i + segLen));
+  const texts = await Promise.all(segments.map(seg => recognizeOne(seg, languageCode)));
+  return texts.join(" ").trim();
+}
+async function recognizeOne(seg, languageCode) {
+  const body = (model) => JSON.stringify({
+    config: { encoding: "LINEAR16", sampleRateHertz: TARGET_RATE, languageCode, enableAutomaticPunctuation: true, ...(model ? { model } : {}) },
+    audio: { content: toBase64PCM16(seg) },
+  });
+  const url = `https://speech.googleapis.com/v1/speech:recognize?key=${encodeURIComponent(cfg().google)}`;
+  let res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body("latest_long") });
+  if (res.status === 400) res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body(null) }); // 言語によってモデル非対応のとき
+  if (!res.ok) throw new Error(`音声認識エラー ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const json = await res.json();
+  return (json.results || []).map(r => r.alternatives?.[0]?.transcript || "").join(" ");
+}
+
+// ---------- Claude で翻訳 ----------
+const history = []; // { from: "th"|"ja", source, translation }
+
+const SYSTEM = `あなたはタイ北部（チェンマイ周辺）で、北タイ語（คำเมือง／カムムアン）話者と日本語話者の対面会話を通訳している。
+音声認識の誤りを含む書き起こしを受け取り、自然な口語に訳す。説明や注釈は付けず、話し言葉としてそのまま読み上げられる訳だけを返す。
+
+【北タイ語側の入力について】
+- 入力は北タイ語の発話を「標準タイ語(th-TH)」の音声認識にかけた結果なので、北タイ語の語が近い音の標準タイ語の語や無意味な綴りに化けていることがある。
+- 声調記号のずれ、似た音の語への置換（例：กิ๋น→กิน、ปิ๊ก→ปิก/ปีก）、語の切れ目の誤りを想定し、会話の流れから元の発話を推定してから訳す。
+- よく出る北タイ語の例：บ่（否定）、เจ้า（丁寧の文末詞・はい）、กิ๋น（食べる）、ลำ（おいしい）、ม่วน（楽しい）、แอ่ว（遊びに行く・出かける）、อู้（話す）、ปิ๊ก（帰る）、หยัง（何）、ไผ（誰）、จะใด（どう・どのように）、ยะ（する）、เปิ้น（その人・自分の丁寧な言い方）、เมิน（長い時間）、ก่（〜も/疑問）。
+- 標準タイ語が混ざっていても普通に扱う。推定しても意味が取れない部分は、日本語訳の中に「（聞き取れず）」と短く書く。
+
+【日本語側の入力について】
+- 日本語の音声認識結果。誤変換は文脈で補正する。`;
+
+const SCHEMA_TH2JA = { type: "object", additionalProperties: false, required: ["restored", "ja"],
+  properties: { restored: { type: "string", description: "推定した元の発話（タイ文字）" }, ja: { type: "string", description: "日本語訳" } } };
+const SCHEMA_JA2TH = { type: "object", additionalProperties: false, required: ["th", "back_ja"],
+  properties: { th: { type: "string", description: "タイ側に読み上げる訳（タイ文字）" }, back_ja: { type: "string", description: "その訳を日本語に直訳し戻したもの（確認用）" } } };
+
+async function translate(from, text) {
+  const c = cfg();
+  const client = new Anthropic({ apiKey: c.anthropic, dangerouslyAllowBrowser: true });
+  const recent = history.slice(-8).map(h => `${h.from === "th" ? "タイ側" : "日本側"}: ${h.source}\n→ ${h.translation}`).join("\n\n");
+  const polite = c.polite === "ka" ? "ค่ะ／คะ" : "ครับ";
+  const task = from === "th"
+    ? `次のタイ側の発話（音声認識結果）を日本語に訳して。\n\n書き起こし:\n${text}`
+    : `次の日本側の発話（音声認識結果）をタイ語に訳して。\n` +
+      (c.style === "northern"
+        ? `訳は北タイ語（คำเมือง）の口語で、タイ文字で書く。丁寧さは文末の เจ้า などで表す。読み上げは標準タイ語の音声合成で行うので、極端に珍しい語は避ける。`
+        : `訳は自然な標準タイ語の口語。日本側の話者の文末詞は ${polite} を使う。`) +
+      `\n\n書き起こし:\n${text}`;
+  const content = (recent ? `これまでの会話（文脈用）:\n${recent}\n\n---\n` : "") + task;
+
+  const res = await client.beta.messages.create({
+    model: "claude-opus-5-5",
+    max_tokens: 4000,
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+    output_config: { effort: "low", format: { type: "json_schema", schema: from === "th" ? SCHEMA_TH2JA : SCHEMA_JA2TH } },
+    system: SYSTEM,
+    messages: [{ role: "user", content }],
+  });
+  if (res.stop_reason === "refusal") throw new Error("翻訳が拒否されました");
+  const block = res.content.find(b => b.type === "text");
+  if (!block) throw new Error("翻訳結果が空でした");
+  return JSON.parse(block.text);
+}
+
+// ---------- 読み上げ（Google TTS → ダメならブラウザ内蔵音声） ----------
+const player = new Audio();
+player.playsInline = true;
+const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+function unlockAudio() { // iOS は「タップ直後」に一度再生しておかないと後で鳴らせない
+  player.src = SILENT; player.play().catch(() => {});
+  try { speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch {}
+}
+
+async function speak(text, lang) {
+  const c = cfg(), languageCode = lang === "th" ? "th-TH" : "ja-JP";
+  const name = lang === "th" ? c.voiceTh : c.voiceJa;
+  try {
+    const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(c.google)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: { text }, voice: { languageCode, ...(name ? { name } : {}) }, audioConfig: { audioEncoding: "MP3", speakingRate: lang === "th" ? 0.95 : 1.0 } }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { audioContent } = await res.json();
+    player.src = "data:audio/mp3;base64," + audioContent;
+    await player.play();
+  } catch (e) {
+    console.warn("Google TTS失敗、端末の音声で再生", e);
+    const u = new SpeechSynthesisUtterance(text); u.lang = languageCode;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  }
+}
+
+// ---------- 画面 ----------
+function setStatus(side, msg) { $("status-" + side).textContent = msg; }
+function addBubble(side, cls, main, sub, speakLang) {
+  const d = document.createElement("div"); d.className = "bubble " + cls;
+  if (speakLang) { const b = document.createElement("button"); b.className = "replay"; b.textContent = "🔊"; b.onclick = () => { unlockAudio(); speak(main, speakLang); }; d.append(b); }
+  d.append(document.createTextNode(main));
+  if (sub) { const s = document.createElement("div"); s.className = "sub"; s.textContent = sub; d.append(s); }
+  const log = $("log-" + side); log.append(d); log.scrollTop = log.scrollHeight;
+}
+
+let busy = false;
+for (const side of ["th", "ja"]) {
+  const btn = $("mic-" + side), idleLabel = btn.textContent;
+  btn.onclick = async () => {
+    unlockAudio();
+    if (rec && rec.side === side) {          // 停止 → 処理
+      btn.classList.remove("recording"); btn.textContent = idleLabel;
+      busy = true; setButtons();
+      try { await handleUtterance(side, await stopRecording()); }
+      catch (e) { setStatus(side, ""); setStatus("ja", "⚠️ " + e.message); console.error(e); }
+      finally { busy = false; setButtons(); }
+      return;
+    }
+    if (rec || busy) return;
+    const c = cfg();
+    if (!c.google || !c.anthropic) { $("open-settings").click(); return; }
+    try { await startRecording(side); btn.classList.add("recording"); btn.textContent = side === "th" ? "⏹ แล้วเจ้า" : "⏹ 話し終わった"; setButtons(); }
+    catch (e) { setStatus("ja", "⚠️ マイクを使えません: " + e.message); }
+  };
+}
+function setButtons() {
+  for (const s of ["th", "ja"]) $("mic-" + s).disabled = busy || (rec && rec.side !== s);
+}
+
+async function handleUtterance(from, pcm) {
+  const to = from === "th" ? "ja" : "th";
+  if (pcm.length < TARGET_RATE * 0.5) { setStatus(from, from === "th" ? "สั้นเกินไปเจ้า" : "短すぎます"); return; }
+  setStatus(from, from === "th" ? "กำลังฟัง…" : "聞き取り中…");
+  const text = await transcribe(pcm, from === "th" ? "th-TH" : "ja-JP");
+  if (!text) { setStatus(from, from === "th" ? "ฟังบ่ได้ยินเจ้า ลองใหม่เน้อ" : "聞き取れませんでした。もう一度どうぞ"); return; }
+  setStatus(from, from === "th" ? "กำลังแปล…" : "翻訳中…");
+  const r = await translate(from, text);
+  if (from === "th") {
+    history.push({ from, source: r.restored || text, translation: r.ja });
+    addBubble("th", "mine", r.restored || text, null, null);
+    addBubble("ja", "theirs", r.ja, "原文: " + (r.restored || text), "ja");
+    setStatus("th", ""); await speak(r.ja, "ja");
+  } else {
+    history.push({ from, source: text, translation: r.th });
+    addBubble("ja", "mine", text, "相手に伝えた内容: " + r.back_ja, null);
+    addBubble("th", "theirs", r.th, null, "th");
+    setStatus("ja", ""); await speak(r.th, "th");
+  }
+}
+</script>
+</body>
+</html>
