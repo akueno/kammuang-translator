@@ -89,6 +89,9 @@
     <option value="krap">ครับ（男性）</option>
     <option value="ka">ค่ะ（女性）</option>
   </select>
+  <label>北タイ語メモ（1行に1語。翻訳のたびにAIへ渡されます）</label>
+  <textarea id="s-glossary" rows="9" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:15px;font-family:inherit"></textarea>
+  <button type="button" id="reset-glossary" style="margin-top:6px;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:13px">メモを最初の内容に戻す</button>
   <label>タイ語の音声（空欄で自動。例: th-TH-Neural2-C）</label>
   <input id="s-voice-th" placeholder="th-TH-Neural2-C">
   <label>日本語の音声（空欄で自動。例: ja-JP-Neural2-B）</label>
@@ -108,8 +111,19 @@ const store = {
   set(k, v) { try { localStorage.setItem("kmt." + k, v); } catch {} },
 };
 const $ = (id) => document.getElementById(id);
-const settingsFields = { google: "s-google", anthropic: "s-anthropic", style: "s-style", polite: "s-polite", voiceTh: "s-voice-th", voiceJa: "s-voice-ja" };
-const defaults = { style: "central", polite: "krap" };
+const settingsFields = { google: "s-google", anthropic: "s-anthropic", style: "s-style", polite: "s-polite", glossary: "s-glossary", voiceTh: "s-voice-th", voiceJa: "s-voice-ja" };
+// 形式: 北タイ語 = 意味（標準タイ語 / メモ）
+const DEFAULT_GLOSSARY = [
+  "ยินดี = ありがとう（標準タイ語では「うれしい・歓迎する」。北タイ語の会話では感謝の意味を優先）",
+  "กิ๋น = 食べる（標準: กิน。音声認識では กิน と出やすい）",
+  "อู้ = 話す（標準: พูด）",
+  "ลำ = おいしい（標準: อร่อย。標準タイ語の ลำ「茎・〜隻」と取り違えない）",
+  "กาด = 市場（標準: ตลาด）",
+  "บ่ = 〜ではない（否定。標準: ไม่）",
+  "ปิ๊ก = 帰る・戻る（標準: กลับ）",
+  "หัน = 見る・見える（標準: เห็น。標準タイ語の หัน「向く・振り向く」と取り違えない）",
+].join("\n");
+const defaults = { style: "central", polite: "krap", glossary: DEFAULT_GLOSSARY };
 const cfg = () => Object.fromEntries(Object.keys(settingsFields).map(k => [k, store.get(k, defaults[k] ?? "")]));
 
 $("open-settings").onclick = () => {
@@ -121,6 +135,7 @@ $("save-settings").onclick = () => {
   for (const [k, id] of Object.entries(settingsFields)) store.set(k, $(id).value.trim());
   $("settings").close();
 };
+$("reset-glossary").onclick = () => { $("s-glossary").value = DEFAULT_GLOSSARY; };
 $("clear-log").onclick = () => { history.length = 0; $("log-th").innerHTML = ""; $("log-ja").innerHTML = ""; $("settings").close(); };
 if (!cfg().google || !cfg().anthropic) setTimeout(() => $("open-settings").click(), 300);
 
@@ -203,8 +218,9 @@ const SYSTEM = `あなたはタイ北部（チェンマイ周辺）で、北タ�
 
 【北タイ語側の入力について】
 - 入力は北タイ語の発話を「標準タイ語(th-TH)」の音声認識にかけた結果なので、北タイ語の語が近い音の標準タイ語の語や無意味な綴りに化けていることがある。
-- 声調記号のずれ、似た音の語への置換（例：กิ๋น→กิน、ปิ๊ก→ปิก/ปีก）、語の切れ目の誤りを想定し、会話の流れから元の発話を推定してから訳す。
-- よく出る北タイ語の例：บ่（否定）、เจ้า（丁寧の文末詞・はい）、กิ๋น（食べる）、ลำ（おいしい）、ม่วน（楽しい）、แอ่ว（遊びに行く・出かける）、อู้（話す）、ปิ๊ก（帰る）、หยัง（何）、ไผ（誰）、จะใด（どう・どのように）、ยะ（する）、เปิ้น（その人・自分の丁寧な言い方）、เมิน（長い時間）、ก่（〜も/疑問）。
+- 北タイ語は6声調、標準タイ語は5声調。認識結果の声調記号は当てにならない。似た音の語への置換（例：กิ๋น→กิน、ปิ๊ก→ปิก/ปีก）、語の切れ目の誤りを想定し、会話の流れから元の発話を推定してから訳す。
+- 最も危険なのは、標準タイ語にも存在するが北タイ語では意味が違う語（例：ยินดี は北タイ語では「ありがとう」、หัน は「見る」）。正しく文字起こしされていても標準タイ語の意味で読まず、話者が北タイ語話者であることを前提に北タイ語の意味を優先する。
+- ユーザーが「北タイ語メモ」を渡した場合、その内容は話者側で確認済みの知識として、あなた自身の知識より優先する。
 - 標準タイ語が混ざっていても普通に扱う。推定しても意味が取れない部分は、日本語訳の中に「（聞き取れず）」と短く書く。
 
 【日本語側の入力について】
@@ -224,10 +240,12 @@ async function translate(from, text) {
     ? `次のタイ側の発話（音声認識結果）を日本語に訳して。\n\n書き起こし:\n${text}`
     : `次の日本側の発話（音声認識結果）をタイ語に訳して。\n` +
       (c.style === "northern"
-        ? `訳は北タイ語（คำเมือง）の口語で、タイ文字で書く。丁寧さは文末の เจ้า などで表す。読み上げは標準タイ語の音声合成で行うので、極端に珍しい語は避ける。`
+        ? `訳は北タイ語（คำเมือง）の口語で、タイ文字で書く。北タイ語メモにある語は必ずそちらを使う（例：ありがとう→ยินดี）。読み上げは標準タイ語の音声合成で行うので、極端に珍しい語は避ける。`
         : `訳は自然な標準タイ語の口語。日本側の話者の文末詞は ${polite} を使う。`) +
       `\n\n書き起こし:\n${text}`;
-  const content = (recent ? `これまでの会話（文脈用）:\n${recent}\n\n---\n` : "") + task;
+  const glossary = c.glossary.trim();
+  const content = (glossary ? `北タイ語メモ（話者側で確認済み。あなたの知識より優先）:\n${glossary}\n\n---\n` : "")
+    + (recent ? `これまでの会話（文脈用）:\n${recent}\n\n---\n` : "") + task;
 
   const res = await client.beta.messages.create({
     model: "claude-opus-5-5",
